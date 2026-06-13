@@ -1,2 +1,5 @@
 #
 .DS_Store
+
+# Playwright MCP test artifacts (screenshots, snapshots, console logs)
+.playwright-mcp/

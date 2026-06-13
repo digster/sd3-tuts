@@ -235,7 +235,9 @@ pre code {
 
 .track-cards {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* auto-fit so two cards sit side by side and three lay out evenly,
+       instead of leaving a lone half-width card on a second row */
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 20px;
     margin: 24px 0 40px;
 }

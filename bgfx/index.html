@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>bgfx Track — SDL3 Recipes</title>
+    <meta name="description" content="Twelve C++ callback-style SDL3 recipes that drive bgfx — a graphics-API-agnostic renderer (Metal / Vulkan / D3D / OpenGL behind one API). From wiring SDL3's native window handle into bgfx to a lit, textured, instanced scene, with the full shaderc cross-backend shader workflow.">
+    <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <span>bgfx Track</span>
+</nav>
+
+<main>
+
+<header class="hero">
+    <h1>bgfx Track</h1>
+    <p class="lede">
+        Twelve recipes that pair SDL3 with <a href="https://github.com/bkaradzic/bgfx">bgfx</a>
+        — a "bring your own engine", graphics-API-agnostic renderer that puts
+        Metal, Vulkan, Direct3D and OpenGL behind one C++ API. SDL3 owns the
+        window, events and timing; bgfx owns the pixels. You'll learn the one
+        thing the <a href="../2d/index.html">2D</a> and <a href="../3d/index.html">3D</a>
+        tracks never have to — how to pull a native window handle out of SDL3
+        and hand it to a third-party renderer — then build up to a lit,
+        textured, instanced scene with shaders authored once and compiled to
+        every backend.
+    </p>
+</header>
+
+<section>
+    <h2>Curriculum</h2>
+    <ul class="recipe-list">
+
+        <li><span class="num">01</span>
+            <span class="title"><a href="01-hello-bgfx.html">Hello bgfx</a>
+            <div class="blurb">SDL3 window → native handle via <code>SDL_GetWindowProperties</code> → <code>bgfx::PlatformData</code>; init, reset, the clear view, <code>touch</code> + <code>frame()</code> in the callback loop.</div></span>
+            <span class="badge badge-beginner">Beginner</span></li>
+
+        <li><span class="num">02</span>
+            <span class="title"><a href="02-debug-text-and-frame-model.html">Debug Text &amp; the Frame Model</a>
+            <div class="blurb">Single-threaded mode (<code>renderFrame</code> before <code>init</code>), the stats/text overlay, and what <code>bgfx::frame()</code> actually does — no shaders required.</div></span>
+            <span class="badge badge-beginner">Beginner</span></li>
+
+        <li><span class="num">03</span>
+            <span class="title"><a href="03-hello-triangle.html">Hello Triangle</a>
+            <div class="blurb">A <code>bgfx::VertexLayout</code>, a transient vertex buffer, your first shader <code>program</code>, one <code>submit</code>.</div></span>
+            <span class="badge badge-beginner">Beginner</span></li>
+
+        <li><span class="num">04</span>
+            <span class="title"><a href="04-shaders-with-shaderc.html">Shaders with shaderc</a>
+            <div class="blurb">Author <code>.sc</code> shaders once; compile with <code>shaderc</code> to Metal / SPIR-V / DXBC. Loading <code>.bin</code> at runtime vs. embedding with <code>BGFX_EMBEDDED_SHADER</code>.</div></span>
+            <span class="badge badge-intermediate">Intermediate</span></li>
+
+        <li><span class="num">05</span>
+            <span class="title"><a href="05-vertex-and-index-buffers.html">Vertex &amp; Index Buffers</a>
+            <div class="blurb">Static <code>createVertexBuffer</code> / <code>createIndexBuffer</code>, interleaved layouts, a colored indexed quad.</div></span>
+            <span class="badge badge-intermediate">Intermediate</span></li>
+
+        <li><span class="num">06</span>
+            <span class="title"><a href="06-uniforms-and-transforms.html">Uniforms &amp; Transforms</a>
+            <div class="blurb"><code>createUniform</code> / <code>setUniform</code>, <code>setTransform</code> for the model matrix, <code>setViewTransform</code> for view + projection — the MVP pipeline, bgfx-style.</div></span>
+            <span class="badge badge-intermediate">Intermediate</span></li>
+
+        <li><span class="num">07</span>
+            <span class="title"><a href="07-spinning-cube.html">The Spinning Cube</a>
+            <div class="blurb">8 vertices, 36 indices, a time-driven rotation. bgfx's classic <code>01-cubes</code> rebuilt on the SDL3 skeleton.</div></span>
+            <span class="badge badge-intermediate">Intermediate</span></li>
+
+        <li><span class="num">08</span>
+            <span class="title"><a href="08-depth-and-render-state.html">Depth &amp; Render State</a>
+            <div class="blurb">The <code>BGFX_STATE_*</code> bitmask — write masks, <code>DEPTH_TEST_LESS</code>, culling — and why the cube looks wrong without Z.</div></span>
+            <span class="badge badge-intermediate">Intermediate</span></li>
+
+        <li><span class="num">09</span>
+            <span class="title"><a href="09-textures-and-samplers.html">Textures &amp; Samplers</a>
+            <div class="blurb"><code>createTexture2D</code>, a <code>SAMPLER</code> uniform, <code>setTexture</code>, UVs in the layout — a hand-built checkerboard, no image loader needed.</div></span>
+            <span class="badge badge-advanced">Advanced</span></li>
+
+        <li><span class="num">10</span>
+            <span class="title"><a href="10-views-and-render-to-texture.html">Views &amp; Render-to-Texture</a>
+            <div class="blurb">Views as the organizing idea — <code>createFrameBuffer</code>, render the scene to an offscreen view, then a fullscreen pass that samples it.</div></span>
+            <span class="badge badge-advanced">Advanced</span></li>
+
+        <li><span class="num">11</span>
+            <span class="title"><a href="11-instancing.html">Instancing</a>
+            <div class="blurb"><code>allocInstanceDataBuffer</code> / <code>setInstanceDataBuffer</code> — a whole grid of cubes drawn in one submit.</div></span>
+            <span class="badge badge-advanced">Advanced</span></li>
+
+        <li><span class="num">12</span>
+            <span class="title"><a href="12-capstone-scene.html">Capstone: Lit, Textured, Instanced Scene</a>
+            <div class="blurb">Everything from 01–11 in one file — shaderc shaders, a textured + lit instanced grid, an SDL3 mouse-driven orbit camera, and the live stats overlay.</div></span>
+            <span class="badge badge-advanced">Advanced</span></li>
+
+    </ul>
+</section>
+
+<section>
+    <h2>How to run the code</h2>
+    <p>
+        Unlike the 2D and 3D tracks, <strong>bgfx is not part of
+        <code>brew install sdl3</code></strong> — it's a separate library you
+        build yourself. The usual route is to clone
+        <a href="https://github.com/bkaradzic/bgfx">bgfx</a> together with its
+        siblings <a href="https://github.com/bkaradzic/bx">bx</a> and
+        <a href="https://github.com/bkaradzic/bimg">bimg</a> and build them with
+        bgfx's GENie/make setup (<code>make</code> on macOS produces the static
+        libs and the <code>shaderc</code> tool under <code>.build/</code>). A
+        package manager works too — <code>vcpkg install bgfx</code> or the
+        equivalent conan recipe.
+    </p>
+    <p>
+        Each recipe's <em>Complete listing</em> is a drop-in replacement for
+        <a href="../../examples/cpp-bgfx/main.cpp"><code>examples/cpp-bgfx/main.cpp</code></a>
+        in the parent template — replace that file's contents, then build with
+        <code>make run-bgfx</code> from the repo root. That folder's
+        <code>Makefile</code> fragment links <code>libbgfx</code>,
+        <code>libbx</code> and <code>libbimg</code> alongside SDL3, the same way
+        <a href="../../examples/cpp-gpu/">cpp-gpu/</a> links SDL3 on its own.
+    </p>
+    <div class="note">
+        <strong>Shaders are compiled offline.</strong> bgfx does not accept
+        shader source at runtime — you author <code>.sc</code> files and compile
+        them with <code>shaderc</code> into per-backend binaries.
+        <a href="04-shaders-with-shaderc.html">Recipe 04</a> covers the whole
+        workflow; recipes 03 and 05–12 assume the compiled shaders it produces
+        live in <code>examples/cpp-bgfx/shaders/</code>.
+    </div>
+    <p>
+        New to the build setup? See the
+        <a href="../../README.md">root README</a>.
+    </p>
+</section>
+
+<nav class="footnav">
+    <a href="../index.html">← All tracks</a>
+    <span></span>
+    <a href="01-hello-bgfx.html">Start with Recipe 01 →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · bgfx Track ·
+    <a href="../3d/index.html">← Back to 3D Track</a>
+</footer>
+
+</body>
+</html>

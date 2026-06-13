@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>07 · The Spinning Cube — bgfx Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">bgfx Track</a> ›
+    <span>07. The Spinning Cube</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-intermediate">Intermediate</span>
+    <h1>Recipe 07 — The Spinning Cube</h1>
+    <p class="tagline">
+        8 vertices, 36 indices, a time-driven rotation — your first real 3D
+        object. And, on purpose, your first look at a 3D scene rendered
+        <em>without</em> depth.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>The canonical bgfx cube: 8 corner vertices reused across 12 triangles via a 36-entry index buffer.</li>
+        <li>Animating the model matrix each frame with <code>bx::mtxRotateXY</code>.</li>
+        <li>Pulling the camera back so a 2-unit cube fits the frame.</li>
+        <li>Why the cube looks scrambled with no depth buffer — the motivation for recipe 08.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p>
+        <a href="06-uniforms-and-transforms.html">Recipe 06</a> — the MVP via
+        <code>setTransform</code> + <code>setViewTransform</code> and
+        <code>u_modelViewProj</code>. We reuse exactly that machinery; only the
+        geometry grows from a quad to a cube. Shaders here are a plain
+        position+colour pair, <code>vs_cubes</code> / <code>fs_cubes</code>
+        (recipes 08, 10 and 11 reuse them).
+    </p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>Eight corners, twelve triangles</h3>
+    <p>
+        A cube has 8 corners. Each of its 6 faces is 2 triangles, so 12
+        triangles × 3 = 36 indices — all pointing back into those same 8
+        vertices. This is the payoff of <a href="05-vertex-and-index-buffers.html">recipe
+        05</a>'s index buffer at a meaningful scale.
+    </p>
+<pre><code class="language-cpp">struct PosColorVertex { float x, y, z; uint32_t abgr; };
+
+static const PosColorVertex kCube[8] = {
+    { -1.0f,  1.0f,  1.0f, 0xff000000 },
+    {  1.0f,  1.0f,  1.0f, 0xff0000ff },
+    { -1.0f, -1.0f,  1.0f, 0xff00ff00 },
+    {  1.0f, -1.0f,  1.0f, 0xff00ffff },
+    { -1.0f,  1.0f, -1.0f, 0xffff0000 },
+    {  1.0f,  1.0f, -1.0f, 0xffff00ff },
+    { -1.0f, -1.0f, -1.0f, 0xffffff00 },
+    {  1.0f, -1.0f, -1.0f, 0xffffffff },
+};
+static const uint16_t kCubeIdx[36] = {
+    0, 1, 2,  1, 3, 2,    // +Z face
+    4, 6, 5,  5, 6, 7,    // -Z face
+    0, 2, 4,  4, 2, 6,    // -X face
+    1, 5, 3,  5, 7, 3,    // +X face
+    0, 4, 1,  4, 5, 1,    // +Y face
+    2, 3, 6,  6, 3, 7,    // -Y face
+};
+</code></pre>
+
+    <h3>Spinning it</h3>
+    <p>
+        Identical camera setup to recipe 06, just pulled further back so the
+        2-unit cube fits, and a two-axis rotation that updates every frame.
+    </p>
+<pre><code class="language-cpp">const bx::Vec3 at  = { 0.0f, 0.0f,  0.0f };
+const bx::Vec3 eye = { 0.0f, 0.0f, -8.0f };
+float view[16], proj[16];
+bx::mtxLookAt(view, eye, at);
+bx::mtxProj(proj, 60.0f, float(st-&gt;width)/float(st-&gt;height), 0.1f, 100.0f,
+            bgfx::getCaps()-&gt;homogeneousDepth);
+bgfx::setViewTransform(0, view, proj);
+
+float model[16];
+bx::mtxRotateXY(model, t * 0.21f, t * 0.37f);   // tumble on X and Y
+bgfx::setTransform(model);
+</code></pre>
+
+    <div class="warn">
+        <strong>Expect a mess.</strong> We submit the cube with only colour
+        writes — no depth test, no depth clear. The GPU draws triangles in index
+        order, so faces that should be hidden behind nearer ones paint right
+        over them. The cube's silhouette tumbles correctly, but its surface
+        flickers and turns inside-out. That's not a bug — it's exactly the
+        problem <a href="08-depth-and-render-state.html">recipe 08</a> solves
+        with one depth flag and one depth clear.
+    </div>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+<pre><code class="language-cpp">/*
+ * bgfx/07-spinning-cube.cpp — a tumbling RGB cube, deliberately WITHOUT depth.
+ * Native-handle + loadProgram helpers are identical to recipe 03 (elided).
+ * Shaders: vs_cubes / fs_cubes (position + color, MVP via u_modelViewProj).
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+#include &lt;bgfx/bgfx.h&gt;
+#include &lt;bgfx/platform.h&gt;
+#include &lt;bx/math.h&gt;
+#include &lt;cstdint&gt;
+
+static void *nativeWindowHandle(SDL_Window *);
+static void *nativeDisplayHandle(SDL_Window *);
+static bgfx::ProgramHandle loadProgram(const char *vs, const char *fs);
+
+struct PosColorVertex { float x, y, z; uint32_t abgr; };
+static const PosColorVertex kCube[8] = {
+    { -1.0f,  1.0f,  1.0f, 0xff000000 }, {  1.0f,  1.0f,  1.0f, 0xff0000ff },
+    { -1.0f, -1.0f,  1.0f, 0xff00ff00 }, {  1.0f, -1.0f,  1.0f, 0xff00ffff },
+    { -1.0f,  1.0f, -1.0f, 0xffff0000 }, {  1.0f,  1.0f, -1.0f, 0xffff00ff },
+    { -1.0f, -1.0f, -1.0f, 0xffffff00 }, {  1.0f, -1.0f, -1.0f, 0xffffffff },
+};
+static const uint16_t kCubeIdx[36] = {
+    0,1,2, 1,3,2,  4,6,5, 5,6,7,  0,2,4, 4,2,6,
+    1,5,3, 5,7,3,  0,4,1, 4,5,1,  2,3,6, 6,3,7,
+};
+
+struct AppState {
+    SDL_Window              *window = nullptr;
+    int                      width = 1280, height = 720;
+    bgfx::VertexLayout       layout;
+    bgfx::VertexBufferHandle vbh = BGFX_INVALID_HANDLE;
+    bgfx::IndexBufferHandle  ibh = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle      program = BGFX_INVALID_HANDLE;
+    Uint64                   startNs = 0;
+};
+
+static SDL_AppResult fail(const char *what) { SDL_Log("%s: %s", what, SDL_GetError()); return SDL_APP_FAILURE; }
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("bgfx Cube", "1.0", "com.example.sdl3.bgfx.cube");
+    if (!SDL_Init(SDL_INIT_VIDEO)) return fail("SDL_Init");
+
+    AppState *st = new AppState(); *appstate = st;
+    st-&gt;window = SDL_CreateWindow("bgfx — The Spinning Cube", st-&gt;width, st-&gt;height,
+                                  SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    if (!st-&gt;window) return fail("SDL_CreateWindow");
+    SDL_GetWindowSizeInPixels(st-&gt;window, &amp;st-&gt;width, &amp;st-&gt;height);
+
+    bgfx::renderFrame();
+    bgfx::Init init;
+    init.type              = bgfx::RendererType::Count;
+    init.platformData.nwh  = nativeWindowHandle(st-&gt;window);
+    init.platformData.ndt  = nativeDisplayHandle(st-&gt;window);
+    init.resolution.width  = (uint32_t)st-&gt;width;
+    init.resolution.height = (uint32_t)st-&gt;height;
+    init.resolution.reset  = BGFX_RESET_VSYNC;
+    if (!bgfx::init(init)) return fail("bgfx::init");
+
+    bgfx::setViewClear(0, BGFX_CLEAR_COLOR, 0x121a30ff, 1.0f, 0);   // no DEPTH clear (yet)
+
+    st-&gt;layout.begin()
+        .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::Color0,   4, bgfx::AttribType::Uint8, true)
+        .end();
+    st-&gt;vbh     = bgfx::createVertexBuffer(bgfx::makeRef(kCube, sizeof(kCube)), st-&gt;layout);
+    st-&gt;ibh     = bgfx::createIndexBuffer (bgfx::makeRef(kCubeIdx, sizeof(kCubeIdx)));
+    st-&gt;program = loadProgram("vs_cubes", "fs_cubes");
+    if (!bgfx::isValid(st-&gt;program)) return fail("loadProgram");
+
+    st-&gt;startNs = SDL_GetTicksNS();
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+        st-&gt;width = e-&gt;window.data1; st-&gt;height = e-&gt;window.data2;
+        bgfx::reset((uint32_t)st-&gt;width, (uint32_t)st-&gt;height, BGFX_RESET_VSYNC);
+    }
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    float t = (float)(SDL_GetTicksNS() - st-&gt;startNs) / 1.0e9f;
+
+    bgfx::setViewRect(0, 0, 0, (uint16_t)st-&gt;width, (uint16_t)st-&gt;height);
+
+    const bx::Vec3 at  = { 0.0f, 0.0f,  0.0f };
+    const bx::Vec3 eye = { 0.0f, 0.0f, -8.0f };
+    float view[16], proj[16];
+    bx::mtxLookAt(view, eye, at);
+    bx::mtxProj(proj, 60.0f, float(st-&gt;width)/float(st-&gt;height), 0.1f, 100.0f,
+                bgfx::getCaps()-&gt;homogeneousDepth);
+    bgfx::setViewTransform(0, view, proj);
+
+    float model[16];
+    bx::mtxRotateXY(model, t * 0.21f, t * 0.37f);
+    bgfx::setTransform(model);
+
+    bgfx::setVertexBuffer(0, st-&gt;vbh);
+    bgfx::setIndexBuffer(st-&gt;ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);   // no depth — see recipe 08
+    bgfx::submit(0, st-&gt;program);
+
+    bgfx::frame();
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (!st) return;
+    if (bgfx::isValid(st-&gt;ibh))     bgfx::destroy(st-&gt;ibh);
+    if (bgfx::isValid(st-&gt;vbh))     bgfx::destroy(st-&gt;vbh);
+    if (bgfx::isValid(st-&gt;program)) bgfx::destroy(st-&gt;program);
+    bgfx::shutdown();
+    SDL_DestroyWindow(st-&gt;window);
+    delete st;
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Slow the spin right down (multiply <code>t</code> by <code>0.05</code>). With the cube nearly still, the depth problem is easier to see — watch a far face bleed through a near one.</li>
+        <li>Rotate on a single axis (<code>bx::mtxRotateY(model, t * 0.3f)</code>). The artefacts change character but never disappear — order, not motion, is the issue.</li>
+        <li>Dolly the camera to <code>eye = { 0, 0, -4 }</code>. The cube nearly fills the frame and may clip the near plane (0.1) when a corner swings close.</li>
+        <li>Peek ahead: add <code>| BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS</code> to <code>setState</code> and <code>| BGFX_CLEAR_DEPTH</code> to the clear. The cube snaps solid — recipe 08 explains exactly why.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="06-uniforms-and-transforms.html">← Prev: Uniforms &amp; Transforms</a>
+    <a href="index.html">Index</a>
+    <a href="08-depth-and-render-state.html">Next: Depth &amp; Render State →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">bgfx Track</a> · Recipe 07
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

@@ -3,8 +3,8 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SDL3 Recipes — 2D & 3D Game Tutorials in C++</title>
-    <meta name="description" content="A progressive, callback-style C++ curriculum for SDL3: 12 recipes for 2D games (SDL_Renderer) and 13 for 3D graphics (SDL_GPU), including cross-platform shaders via SDL_shadercross. Beginner to advanced.">
+    <title>SDL3 Recipes — 2D, 3D & bgfx Game Tutorials in C++</title>
+    <meta name="description" content="A progressive, callback-style C++ curriculum for SDL3: 12 recipes for 2D games (SDL_Renderer), 13 for 3D graphics (SDL_GPU) with cross-platform shaders via SDL_shadercross, and 12 for the bgfx renderer (Metal/Vulkan/D3D behind one API). Beginner to advanced.">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -19,9 +19,11 @@
     <h1>SDL3 Recipes</h1>
     <p class="lede">
         A progressive, callback-style C++ curriculum for SDL3 — twelve recipes for
-        2D games and thirteen for 3D graphics (capped with cross-platform shaders
-        via SDL_shadercross), ordered beginner to advanced. Every snippet uses
-        the same <code>SDL_AppInit</code> / <code>SDL_AppEvent</code> /
+        2D games, thirteen for 3D graphics (capped with cross-platform shaders
+        via SDL_shadercross), and twelve for driving the
+        <a href="https://github.com/bkaradzic/bgfx">bgfx</a> renderer, ordered
+        beginner to advanced. Every snippet uses the same
+        <code>SDL_AppInit</code> / <code>SDL_AppEvent</code> /
         <code>SDL_AppIterate</code> / <code>SDL_AppQuit</code> skeleton, so you
         learn one loop model and reuse it everywhere.
     </p>
@@ -50,6 +52,19 @@
                 D3D12 under one API. From the "hello triangle" to a textured, lit
                 cube with an FPS camera, offscreen render targets, and finally
                 cross-platform shaders authored once in HLSL.
+            </p>
+            <span class="cta">Start with Recipe 01 →</span>
+        </a>
+
+        <a class="card" href="bgfx/index.html">
+            <div class="meta">12 recipes · bgfx + shaderc</div>
+            <h2>bgfx Track</h2>
+            <p>
+                Step outside SDL for the rendering: wire SDL3's native window
+                handle into bgfx, a graphics-API-agnostic renderer (Metal /
+                Vulkan / D3D / OpenGL under one API). From clearing the screen to
+                a lit, textured, instanced scene — with shaders authored once and
+                compiled to every backend via shaderc.
             </p>
             <span class="cta">Start with Recipe 01 →</span>
         </a>
@@ -118,6 +133,14 @@
         &amp; Quads · Uniforms &amp; the MVP Matrix · The 3D Cube · Depth
         Testing · Textures &amp; Samplers · Phong Lighting · Multiple Objects ·
         FPS Camera · Render-to-Texture · Shadercross in Practice.
+    </p>
+    <h3>bgfx — <code>bgfx</code> + <code>shaderc</code></h3>
+    <p>
+        Hello bgfx · Debug Text &amp; the Frame Model · Hello Triangle · Shaders
+        with shaderc · Vertex &amp; Index Buffers · Uniforms &amp; Transforms ·
+        The Spinning Cube · Depth &amp; Render State · Textures &amp; Samplers ·
+        Views &amp; Render-to-Texture · Instancing · Capstone: Lit, Textured,
+        Instanced Scene.
     </p>
 </section>
 

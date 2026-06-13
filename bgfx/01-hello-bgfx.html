@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>01 · Hello bgfx — bgfx Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">bgfx Track</a> ›
+    <span>01. Hello bgfx</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-beginner">Beginner</span>
+    <h1>Recipe 01 — Hello bgfx</h1>
+    <p class="tagline">
+        Open an SDL3 window, hand its native handle to <code>bgfx</code>, and
+        clear the screen every frame — the smallest legal SDL3 + bgfx program,
+        on the same <code>SDL_App*</code> skeleton as the rest of the site.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>What bgfx is, and how the division of labour with SDL3 works: SDL3 owns the window, events and timing; bgfx owns the pixels.</li>
+        <li>How to pull a <strong>native window handle</strong> out of SDL3 with the window-properties API (<code>SDL_GetWindowProperties</code> + <code>SDL_GetPointerProperty</code>).</li>
+        <li>Why you call <code>bgfx::renderFrame()</code> <em>before</em> <code>bgfx::init()</code> to get single-threaded mode — the key to living inside <code>SDL_AppIterate</code>.</li>
+        <li>The per-frame trio: <code>setViewClear</code> → <code>touch</code> → <code>frame</code>.</li>
+        <li>Sizing the backbuffer in <strong>pixels</strong>, not points, so high-DPI displays render correctly.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p>
+        bgfx, <a href="https://github.com/bkaradzic/bx">bx</a> and
+        <a href="https://github.com/bkaradzic/bimg">bimg</a> built and linkable
+        (see <a href="index.html">the track index</a> for the how-to), and
+        SDL3 installed. Comfort with the callback model from
+        <a href="../2d/01-hello-window.html">2D recipe 01</a> — this recipe
+        reuses the same <code>SDL_AppInit</code> / <code>SDL_AppEvent</code> /
+        <code>SDL_AppIterate</code> / <code>SDL_AppQuit</code> structure and a
+        single heap <code>AppState</code>.
+    </p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>What bgfx is — and what it isn't</h3>
+    <p>
+        <code>SDL_Renderer</code> (2D track) and <code>SDL_GPU</code> (3D track)
+        are <em>part of SDL</em>. bgfx is a separate library: a thin,
+        graphics-API-agnostic renderer that maps your draw calls onto Metal,
+        Vulkan, Direct3D or OpenGL — whichever the platform prefers. It has no
+        windowing, no input, no audio. That's the deal SDL3 + bgfx strikes:
+        SDL3 creates the window and feeds you events; bgfx draws into it.
+    </p>
+    <p>
+        The bridge between them is a single OS-level handle. SDL3 created the
+        window, so SDL3 knows the underlying <code>NSWindow</code> (macOS),
+        <code>HWND</code> (Windows) or X11/Wayland surface — and bgfx needs
+        exactly that to create its swapchain.
+    </p>
+
+    <h3>Pulling the native handle out of SDL3</h3>
+    <p>
+        SDL2 exposed this through <code>SDL_SysWMinfo</code>. SDL3 replaced that
+        with a <strong>window-properties</strong> bag: ask the window for its
+        <code>SDL_PropertiesID</code>, then read the platform-specific key.
+    </p>
+<pre><code class="language-cpp">// bgfx needs the OS window object, plus (on X11/Wayland) the display.
+static void *nativeWindowHandle(SDL_Window *window)
+{
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+#if defined(SDL_PLATFORM_MACOS)
+    return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+#elif defined(SDL_PLATFORM_WIN32)
+    return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+#elif defined(SDL_PLATFORM_LINUX)
+    if (SDL_strcmp(SDL_GetCurrentVideoDriver(), "wayland") == 0)
+        return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+    // X11's window id is an integer, not a pointer — read it as a number.
+    return (void *)(uintptr_t)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+#else
+    return nullptr;
+#endif
+}
+
+// On X11/Wayland bgfx also wants the display connection (ndt); elsewhere NULL.
+static void *nativeDisplayHandle(SDL_Window *window)
+{
+#if defined(SDL_PLATFORM_LINUX)
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    if (SDL_strcmp(SDL_GetCurrentVideoDriver(), "wayland") == 0)
+        return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
+    return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+#else
+    (void)window;
+    return nullptr;
+#endif
+}
+</code></pre>
+    <p>
+        The X11 branch is the odd one out: an X11 window is an integer XID, so
+        we read it with <code>SDL_GetNumberProperty</code> and cast through
+        <code>uintptr_t</code> into the <code>void *</code> bgfx expects.
+    </p>
+
+    <h3>Init: single-threaded mode, then bgfx::init</h3>
+    <p>
+        By default bgfx spawns its own render thread. That's great for engines
+        but awkward for the callback model, where SDL owns the main thread and
+        calls us back. The fix is one line: call
+        <code>bgfx::renderFrame()</code> <em>once before</em>
+        <code>bgfx::init()</code> on this same thread. bgfx sees both calls on
+        one thread and runs <strong>single-threaded</strong> — now
+        <code>bgfx::frame()</code> renders inline, no extra thread to reason
+        about.
+    </p>
+<pre><code class="language-cpp">bgfx::renderFrame();                         // &lt;-- forces single-threaded mode
+
+bgfx::Init init;
+init.type              = bgfx::RendererType::Count;   // auto-pick (Metal on macOS)
+init.platformData.nwh  = nativeWindowHandle(st-&gt;window);
+init.platformData.ndt  = nativeDisplayHandle(st-&gt;window);
+init.resolution.width  = (uint32_t)st-&gt;width;         // in PIXELS, see below
+init.resolution.height = (uint32_t)st-&gt;height;
+init.resolution.reset  = BGFX_RESET_VSYNC;
+bgfx::init(init);
+</code></pre>
+
+    <div class="note">
+        <strong>Pixels, not points.</strong> On a Retina Mac the window is 1280×720
+        <em>points</em> but the drawable is 2560×1440 <em>pixels</em>. bgfx sizes
+        its backbuffer in pixels, so we create the window with
+        <code>SDL_WINDOW_HIGH_PIXEL_DENSITY</code> and read its size with
+        <code>SDL_GetWindowSizeInPixels</code> — never <code>SDL_GetWindowSize</code>.
+        Get this wrong and the scene renders into the bottom-left quarter.
+    </div>
+
+    <h3>The clear view</h3>
+    <p>
+        bgfx organises rendering into numbered <strong>views</strong> (more on
+        these in <a href="10-views-and-render-to-texture.html">recipe 10</a>).
+        View 0 is enough for now: tell it to clear, and tell it which rectangle
+        of the backbuffer it covers.
+    </p>
+<pre><code class="language-cpp">bgfx::setViewClear(0, BGFX_CLEAR_COLOR, 0x121a30ff /*RGBA*/, 1.0f, 0);
+bgfx::setViewRect(0, 0, 0, (uint16_t)st-&gt;width, (uint16_t)st-&gt;height);
+</code></pre>
+
+    <h3>Per-frame: touch → frame</h3>
+    <p>
+        A view that has no draw calls is skipped — including its clear. So we
+        <code>touch()</code> view 0 to mark it for processing, then call
+        <code>frame()</code> to submit. In single-threaded mode
+        <code>frame()</code> does the actual GPU work before returning.
+    </p>
+<pre><code class="language-cpp">bgfx::touch(0);   // "process view 0 even though I drew nothing"
+bgfx::frame();    // submit + render + present
+</code></pre>
+    <p>
+        On resize we tell bgfx to rebuild its backbuffer with
+        <code>bgfx::reset()</code> and update the view rect — SDL3 hands us the
+        new <em>pixel</em> size in <code>SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED</code>.
+    </p>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+    <p>
+        Drop this into <code>examples/cpp-bgfx/main.cpp</code> and build with
+        <code>make run-bgfx</code>. You should get a resizable window filled
+        with dark blue — no shaders, no geometry, just proof the SDL3 ↔ bgfx
+        bridge is live.
+    </p>
+<pre><code class="language-cpp">/*
+ * bgfx/01-hello-bgfx.cpp — open an SDL3 window, hand its native handle to
+ * bgfx, and clear the screen every frame.
+ */
+#define SDL_MAIN_USE_CALLBACKS 1
+#include &lt;SDL3/SDL.h&gt;
+#include &lt;SDL3/SDL_main.h&gt;
+
+#include &lt;bgfx/bgfx.h&gt;
+#include &lt;bgfx/platform.h&gt;   // bgfx::PlatformData, bgfx::renderFrame
+#include &lt;cstdint&gt;
+
+static void *nativeWindowHandle(SDL_Window *window)
+{
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+#if defined(SDL_PLATFORM_MACOS)
+    return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+#elif defined(SDL_PLATFORM_WIN32)
+    return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+#elif defined(SDL_PLATFORM_LINUX)
+    if (SDL_strcmp(SDL_GetCurrentVideoDriver(), "wayland") == 0)
+        return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+    return (void *)(uintptr_t)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+#else
+    return nullptr;
+#endif
+}
+
+static void *nativeDisplayHandle(SDL_Window *window)
+{
+#if defined(SDL_PLATFORM_LINUX)
+    SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    if (SDL_strcmp(SDL_GetCurrentVideoDriver(), "wayland") == 0)
+        return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
+    return SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+#else
+    (void)window;
+    return nullptr;
+#endif
+}
+
+struct AppState {
+    SDL_Window *window = nullptr;
+    int         width  = 1280;
+    int         height = 720;
+};
+
+static SDL_AppResult fail(const char *what) { SDL_Log("%s: %s", what, SDL_GetError()); return SDL_APP_FAILURE; }
+
+SDL_AppResult SDL_AppInit(void **appstate, int, char *[])
+{
+    SDL_SetAppMetadata("Hello bgfx", "1.0", "com.example.sdl3.bgfx.hello");
+    if (!SDL_Init(SDL_INIT_VIDEO)) return fail("SDL_Init");
+
+    AppState *st = new AppState(); *appstate = st;
+
+    st-&gt;window = SDL_CreateWindow("Hello bgfx", st-&gt;width, st-&gt;height,
+                                  SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    if (!st-&gt;window) return fail("SDL_CreateWindow");
+
+    // bgfx sizes its backbuffer in pixels, which differ from points on Retina.
+    SDL_GetWindowSizeInPixels(st-&gt;window, &amp;st-&gt;width, &amp;st-&gt;height);
+
+    bgfx::renderFrame();   // single-threaded mode: must precede init() on this thread
+
+    bgfx::Init init;
+    init.type              = bgfx::RendererType::Count;
+    init.platformData.nwh  = nativeWindowHandle(st-&gt;window);
+    init.platformData.ndt  = nativeDisplayHandle(st-&gt;window);
+    init.resolution.width  = (uint32_t)st-&gt;width;
+    init.resolution.height = (uint32_t)st-&gt;height;
+    init.resolution.reset  = BGFX_RESET_VSYNC;
+    if (!bgfx::init(init)) return fail("bgfx::init");
+
+    bgfx::setViewClear(0, BGFX_CLEAR_COLOR, 0x121a30ff, 1.0f, 0);
+    bgfx::setViewRect(0, 0, 0, (uint16_t)st-&gt;width, (uint16_t)st-&gt;height);
+
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (e-&gt;type == SDL_EVENT_QUIT) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_KEY_DOWN &amp;&amp; e-&gt;key.scancode == SDL_SCANCODE_ESCAPE) return SDL_APP_SUCCESS;
+    if (e-&gt;type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+        st-&gt;width  = e-&gt;window.data1;   // already in pixels
+        st-&gt;height = e-&gt;window.data2;
+        bgfx::reset((uint32_t)st-&gt;width, (uint32_t)st-&gt;height, BGFX_RESET_VSYNC);
+        bgfx::setViewRect(0, 0, 0, (uint16_t)st-&gt;width, (uint16_t)st-&gt;height);
+    }
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    (void)appstate;
+    bgfx::touch(0);   // ensure view 0 (and its clear) is processed
+    bgfx::frame();    // submit + render + present
+    return SDL_APP_CONTINUE;
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult)
+{
+    AppState *st = static_cast&lt;AppState *&gt;(appstate);
+    if (!st) return;
+    bgfx::shutdown();
+    SDL_DestroyWindow(st-&gt;window);
+    delete st;
+}
+</code></pre>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Change the clear colour. The packed value is <code>0xRRGGBBAA</code>, so <code>0x301a12ff</code> is a warm brown. Note bgfx uses a single packed int, unlike SDL_GPU's four floats.</li>
+        <li>Force a specific backend: set <code>init.type = bgfx::RendererType::Vulkan</code> (or <code>OpenGL</code>). On macOS only <code>Metal</code> / <code>OpenGL</code> are available — a bad choice makes <code>bgfx::init</code> return false, which our <code>fail()</code> reports.</li>
+        <li>Delete the <code>bgfx::touch(0)</code> call. The window stops clearing (you'll see garbage or a frozen frame) — proof that an untouched, undrawn view is skipped entirely.</li>
+        <li>Drop <code>SDL_WINDOW_HIGH_PIXEL_DENSITY</code> and switch to <code>SDL_GetWindowSize</code>. On a Retina display the clear now fills only a quarter of the window.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="index.html">← Track index</a>
+    <a href="index.html">Index</a>
+    <a href="02-debug-text-and-frame-model.html">Next: Debug Text &amp; the Frame Model →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">bgfx Track</a> · Recipe 01
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+</body>
+</html>

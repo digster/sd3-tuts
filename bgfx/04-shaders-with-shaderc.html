@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>04 · Shaders with shaderc — bgfx Track — SDL3 Recipes</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+</head>
+<body>
+
+<nav class="topnav">
+    <a href="../index.html">SDL3 Recipes</a> ›
+    <a href="index.html">bgfx Track</a> ›
+    <span>04. Shaders with shaderc</span>
+</nav>
+
+<main>
+
+<header class="recipe-header">
+    <span class="badge badge-intermediate">Intermediate</span>
+    <h1>Recipe 04 — Shaders with shaderc</h1>
+    <p class="tagline">
+        Author a shader once in bgfx's GLSL-like language; compile it with
+        <code>shaderc</code> to Metal, SPIR-V and HLSL. The bgfx answer to the
+        3D track's <code>SDL_shadercross</code> story.
+    </p>
+</header>
+
+<section>
+    <h2>What you'll learn</h2>
+    <ul>
+        <li>bgfx's <code>.sc</code> shader dialect and how it differs from vanilla GLSL (<code>mul</code>, <code>vec3_splat</code>, <code>SAMPLER2D</code>, float-only uniforms).</li>
+        <li><code>varying.def.sc</code> and the <code>$input</code>/<code>$output</code> contract between stages.</li>
+        <li>The <code>shaderc</code> command line — <code>--type</code>, <code>--platform</code>, <code>-p</code> profile, <code>-i</code> include path — and a build script that targets every backend.</li>
+        <li>The two ways to ship the result: load <code>.bin</code> files at runtime, or embed them with <code>BGFX_EMBEDDED_SHADER</code>.</li>
+        <li>bgfx's <strong>predefined uniforms</strong> (<code>u_modelViewProj</code> and friends) you get for free — the setup for recipe 06.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>Prerequisites</h2>
+    <p>
+        The triangle from <a href="03-hello-triangle.html">recipe 03</a>, and a
+        built <code>shaderc</code> binary (it falls out of the bgfx build under
+        <code>.build/&lt;config&gt;/bin/shadercRelease</code>). You'll also need bgfx's
+        shader include directory, <code>bgfx/src</code>, which holds
+        <code>bgfx_shader.sh</code>.
+    </p>
+</section>
+
+<section>
+    <h2>Walkthrough</h2>
+
+    <h3>One language, every backend</h3>
+    <p>
+        You write shaders in a single GLSL-flavoured language. <code>shaderc</code>
+        runs it through a C preprocessor and translates to whatever the target
+        needs — MSL for Metal, SPIR-V for Vulkan, DXBC for Direct3D, GLSL/ESSL
+        for OpenGL. The 3D track reached the same destination with
+        <code>SDL_shadercross</code>; bgfx bakes the tool right into its
+        ecosystem.
+    </p>
+    <p>A few dialect rules bite newcomers — they exist because the source becomes HLSL under the hood:</p>
+    <ul>
+        <li><strong>Matrix math uses <code>mul(m, v)</code></strong>, never <code>m * v</code>.</li>
+        <li><strong>Single-value vector constructors are <code>vec3_splat(x)</code></strong>; multi-value <code>vec3(a,b,c)</code> is fine.</li>
+        <li><strong>Samplers use the <code>SAMPLER2D(name, stage)</code> macro</strong> (recipe 09).</li>
+        <li><strong>Uniforms must be <code>float</code>-based</strong> — no <code>bool</code>/<code>int</code> uniforms.</li>
+        <li>Inputs/outputs are declared in <code>varying.def.sc</code> and pulled in with <code>$input</code>/<code>$output</code>.</li>
+    </ul>
+
+    <h3>The varying contract</h3>
+    <p>
+        <code>varying.def.sc</code> is a shared manifest: it names every vertex
+        attribute and every inter-stage varying, with a semantic. Both shaders
+        reference entries from it by name; the names in <code>$input</code>/
+        <code>$output</code> must match.
+    </p>
+<pre><code># varying.def.sc
+vec4 v_color0   : COLOR0;
+
+vec3 a_position : POSITION;
+vec4 a_color0   : COLOR0;
+</code></pre>
+
+    <h3>Compiling — the command</h3>
+    <p>
+        One <code>shaderc</code> invocation produces one <code>.bin</code> for
+        one backend. The profile flag <code>-p</code> chooses the language;
+        <code>--platform</code> sets preprocessor defines; <code>-i</code> points
+        at bgfx's shader headers.
+    </p>
+<pre><code># Metal (macOS)
+shaderc -f vs_triangle.sc -o shaders/metal/vs_triangle.bin \
+        --type vertex   --platform osx     -p metal \
+        --varyingdef varying.def.sc -i $BGFX/src
+
+# SPIR-V (Vulkan, Linux/Windows)
+shaderc -f fs_triangle.sc -o shaders/spirv/fs_triangle.bin \
+        --type fragment --platform linux   -p spirv \
+        --varyingdef varying.def.sc -i $BGFX/src
+
+# HLSL / Direct3D 11 (Windows ONLY — D3D shaders can't be cross-compiled off-Windows)
+shaderc -f vs_triangle.sc -o shaders/dx11/vs_triangle.bin \
+        --type vertex   --platform windows -p s_5_0 -O 3 \
+        --varyingdef varying.def.sc -i %BGFX%/src
+</code></pre>
+    <p>
+        The output folder names (<code>metal/</code>, <code>spirv/</code>,
+        <code>dx11/</code>, <code>glsl/</code>) match the
+        <code>shaderDir()</code> switch in recipe 03, so the runtime loader picks
+        the right binary for the active backend automatically.
+    </p>
+
+    <div class="note">
+        <strong>Predefined uniforms come free.</strong> bgfx auto-fills a set of
+        uniforms every frame: <code>u_modelViewProj</code>, <code>u_model[]</code>,
+        <code>u_view</code>, <code>u_proj</code>, <code>u_viewProj</code> and more.
+        You set the matrices behind them with <code>setTransform</code> (model)
+        and <code>setViewTransform</code> (view + projection) on the C++ side —
+        no hand-rolled push constants like the 3D track. Recipe 06 uses
+        <code>u_modelViewProj</code> for the first time.
+    </div>
+
+    <h3>Two ways to ship</h3>
+    <p>
+        <strong>Runtime load</strong> (recipe 03's <code>loadProgram</code>):
+        ship the <code>shaders/&lt;backend&gt;/*.bin</code> tree next to your
+        executable and read it with <code>SDL_LoadFile</code>. Simple, hot-swappable,
+        but it's loose files on disk.
+    </p>
+    <p>
+        <strong>Embed</strong>: add <code>--bin2c</code> to each
+        <code>shaderc</code> call to emit a C array instead of a binary, gather
+        the per-backend arrays into one <code>.bin.h</code>, and let the
+        <code>BGFX_EMBEDDED_SHADER</code> macro pick the right one at runtime.
+        Now the shaders live inside the executable — a single self-contained
+        binary, the bgfx equivalent of recipe 13's offline workflow in the 3D
+        track.
+    </p>
+</section>
+
+<section>
+    <h2>Complete listing</h2>
+
+    <h3>The shaders (same files recipe 03 referenced)</h3>
+<pre><code># vs_triangle.sc
+$input  a_position, a_color0
+$output v_color0
+#include "bgfx_shader.sh"
+void main() {
+    gl_Position = vec4(a_position, 1.0);
+    v_color0    = a_color0;
+}
+</code></pre>
+<pre><code># fs_triangle.sc
+$input v_color0
+#include "bgfx_shader.sh"
+void main() {
+    gl_FragColor = v_color0;
+}
+</code></pre>
+
+    <h3>A build script for every backend</h3>
+    <p>
+        Drop this in <code>examples/cpp-bgfx/shaders/</code>. It compiles each
+        <code>.sc</code> for every backend your platform can target. (On macOS
+        you'll get Metal, SPIR-V and GLSL; DXBC needs Windows.)
+    </p>
+<pre><code class="language-bash">#!/usr/bin/env bash
+# build_shaders.sh — compile every vs_*/fs_* for all local backends.
+set -euo pipefail
+SHADERC=${SHADERC:-shaderc}
+BGFX_SRC=${BGFX_SRC:?set BGFX_SRC to your bgfx/src directory}
+
+compile() {                     # $1=file  $2=type(vertex|fragment)
+    local base="${1%.sc}"
+    shaderc -f "$1" -o "metal/$base.bin"  --type "$2" --platform osx   -p metal  --varyingdef varying.def.sc -i "$BGFX_SRC"
+    shaderc -f "$1" -o "spirv/$base.bin"  --type "$2" --platform linux -p spirv  --varyingdef varying.def.sc -i "$BGFX_SRC"
+    shaderc -f "$1" -o "glsl/$base.bin"   --type "$2" --platform linux -p 440    --varyingdef varying.def.sc -i "$BGFX_SRC"
+}
+
+mkdir -p metal spirv glsl
+for f in vs_*.sc; do compile "$f" vertex;   done
+for f in fs_*.sc; do compile "$f" fragment; done
+echo "shaders compiled."
+</code></pre>
+
+    <h3>Alternative: the embedded-shader loader</h3>
+    <p>
+        If you compiled with <code>--bin2c</code>, swap recipe 03's
+        <code>loadProgram</code> for this — no files on disk, the right backend
+        chosen at runtime:
+    </p>
+<pre><code class="language-cpp">#include &lt;bgfx/embedded_shader.h&gt;
+#include "vs_triangle.bin.h"   // generated: arrays vs_triangle_mtl, _spv, _dx11, _glsl ...
+#include "fs_triangle.bin.h"
+
+static const bgfx::EmbeddedShader kEmbedded[] = {
+    BGFX_EMBEDDED_SHADER(vs_triangle),
+    BGFX_EMBEDDED_SHADER(fs_triangle),
+    BGFX_EMBEDDED_SHADER_END()
+};
+
+static bgfx::ProgramHandle loadProgramEmbedded(const char *vs, const char *fs) {
+    bgfx::RendererType::Enum type = bgfx::getRendererType();
+    return bgfx::createProgram(
+        bgfx::createEmbeddedShader(kEmbedded, type, vs),
+        bgfx::createEmbeddedShader(kEmbedded, type, fs),
+        true /*destroy shaders with program*/);
+}
+</code></pre>
+    <p>
+        Either loader returns a <code>bgfx::ProgramHandle</code>, so the rest of
+        every recipe in this track is identical regardless of which you choose.
+    </p>
+</section>
+
+<section>
+    <h2>Try it yourself</h2>
+    <ol>
+        <li>Run <code>shaderc</code> with no arguments to print the full flag list, then add <code>--verbose</code> to a compile and read the generated target source it prints.</li>
+        <li>Introduce a deliberate error — write <code>a_position * u_model</code> instead of <code>mul(...)</code>. shaderc fails with a clear message; that's the dialect enforcing HLSL-compatible math.</li>
+        <li>Tint the fragment output: <code>gl_FragColor = v_color0 * vec4_splat(0.5);</code>. Recompile only the fragment shader and relaunch — the triangle dims, no C++ rebuild needed (runtime-load path).</li>
+        <li>Add <code>--bin2c</code> to one compile and open the generated header. You'll see the per-backend byte arrays the <code>BGFX_EMBEDDED_SHADER</code> macro stitches together.</li>
+    </ol>
+</section>
+
+<nav class="footnav">
+    <a href="03-hello-triangle.html">← Prev: Hello Triangle</a>
+    <a href="index.html">Index</a>
+    <a href="05-vertex-and-index-buffers.html">Next: Vertex &amp; Index Buffers →</a>
+</nav>
+
+</main>
+
+<footer class="site-footer">
+    <a href="../index.html">SDL3 Recipes</a> · <a href="index.html">bgfx Track</a> · Recipe 04
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-c.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-cpp.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+</body>
+</html>
